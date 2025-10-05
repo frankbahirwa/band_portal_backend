@@ -5,8 +5,9 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
 const path = require("path");
-const fs = require("fs"); // ✅ Required for uploads
+const fs = require("fs");
 const dotenv = require("dotenv");
+const multer = require("multer");
 dotenv.config();
 
 const app = express();
@@ -17,47 +18,21 @@ const PORT = process.env.PORT || 4000;
 // ==================
 app.use(helmet());
 
-// Ensure uploads folder exists
+// Ensure uploads/blogs folder exists
 const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-  console.log('📁 Created uploads directory:', uploadDir);
+const blogDir = path.join(uploadDir, "blogs");
+
+if (!fs.existsSync(blogDir)) {
+  fs.mkdirSync(blogDir, { recursive: true });
+  console.log("📁 Created uploads/blogs directory:", blogDir);
 }
 
-// ✅ SERVE STATIC FILES WITH CORS HEADERS — PLACE THIS BEFORE ROUTES
-app.use("/uploads", (req, res, next) => {
-  // Set CORS headers for images
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // If it's a preflight request, respond immediately
-  if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-  } else {
-    next();
-  }
-}, express.static(uploadDir, {
-  setHeaders: (res, path) => {
-    if (path.endsWith('.png') || path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.gif')) {
-      res.setHeader('Content-Type', 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=31536000');
-    }
-  }
-}));
-
-// Body parsers — must come before routes
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-// Cookie parser
-app.use(cookieParser());
-
-// CORS — Allow frontend origin + credentials
+// ==================
+// CORS Setup
+// ==================
 const allowedOrigins = [
-  'http://localhost:5173',
-  ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").filter(Boolean) : [])
+  "http://localhost:5173",
+  ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").filter(Boolean) : []),
 ];
 
 app.use(
@@ -67,9 +42,12 @@ app.use(
   })
 );
 
-// Rate limiter
+
+// ==================
+// Rate Limiter
+// ==================
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
+  windowMs: 1 * 60 * 1000,
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
@@ -77,25 +55,88 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // ==================
-// Routes — Specific before generic
+// Body parsers
 // ==================
-const contactMessagesRouter = require('./routes/contactMessages');
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// ==================
+// Static Uploads
+// ==================
+// Use express.static's setHeaders to guarantee CORS headers for all /uploads responses
+// Relax Helmet security headers for /uploads
+app.use("/uploads", (req, res, next) => {
+  res.removeHeader && res.removeHeader("Cross-Origin-Resource-Policy");
+  res.removeHeader && res.removeHeader("Cross-Origin-Opener-Policy");
+  res.removeHeader && res.removeHeader("X-Frame-Options");
+  res.removeHeader && res.removeHeader("Content-Security-Policy");
+  res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
+  next();
+});
+app.use("/uploads", express.static(uploadDir, {
+  setHeaders: function (res, path, stat) {
+    res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
+    // Relax security headers for media
+    res.removeHeader && res.removeHeader("Cross-Origin-Resource-Policy");
+    res.removeHeader && res.removeHeader("Cross-Origin-Opener-Policy");
+    res.removeHeader && res.removeHeader("X-Frame-Options");
+    res.removeHeader && res.removeHeader("Content-Security-Policy");
+  }
+}));
+
+
+// ==================
+// Multer Setup for Blog Uploads
+// ==================
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, blogDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({ storage });
+
+// ==================
+// Example Blog Routes
+// ==================
+
+// ==================
+// Cookie parser
+// ==================
+app.use(cookieParser());
+
+// ==================
+// Other routes (your existing routes)
+// ==================
+const contactMessagesRouter = require("./routes/contactMessages");
 const adminRoutes = require("./routes/admin");
 const publicRoutes = require("./routes/public");
 const youtubeRoutes = require("./routes/youtube");
-const photoRoutes = require("./routes/photo"); // ✅ Fixed route
-const blogRoutes = require("./routes/blogs"); // ✅ Added blog routes
-// Import music routes
+const photoRoutes = require("./routes/photo");
 const musicRoutes = require("./routes/music");
+const donationsRoutes = require("./routes/donations");
+const eventsRouter = require("./routes/events");
+const blogRoutes = require("./routes/blogs");
 
-// Mount music routes
+// Mount routes
+app.use("/api/events", eventsRouter);
 app.use("/api/music", musicRoutes);
+app.use("/api/photos", photoRoutes);
+app.use("/api/blogs", blogRoutes);
+app.use("/api/donations", donationsRoutes);
+app.use("/api/admin/donations", donationsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/youtube", youtubeRoutes);
-app.use("/api/photos", photoRoutes);
-app.use("/api/blogs", blogRoutes); // ✅ Mounted blog routes
-app.use("/api/contact-messages", contactMessagesRouter); // ✅ Plural to match frontend
-app.use("/api", publicRoutes); // catch-all for other public APIs
+app.use("/api/contact-messages", contactMessagesRouter);
+app.use("/api", publicRoutes);
 
 // ==================
 // Health check
@@ -105,12 +146,10 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 // ==================
 // Error Handling
 // ==================
-// 404 handler
 app.use((req, res, next) => {
   res.status(404).json({ message: "Route not found" });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
@@ -119,7 +158,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
+
+
+// ==================
+// Start Server
+// ==================
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
