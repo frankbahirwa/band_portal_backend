@@ -28,20 +28,29 @@ if (!fs.existsSync(blogDir)) {
 }
 
 // ==================
-// CORS Setup
+// ✅ CORS Setup (Fixed)
 // ==================
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:5174", // added new frontend port
   ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").filter(Boolean) : []),
 ];
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+      // Allow requests without origin (like curl or mobile)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin) || origin.startsWith("http://localhost")) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
-
 
 // ==================
 // Rate Limiter
@@ -61,33 +70,36 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // ==================
-// Static Uploads
+// ✅ Static Uploads (Fixed CORS)
 // ==================
-// Use express.static's setHeaders to guarantee CORS headers for all /uploads responses
-// Relax Helmet security headers for /uploads
 app.use("/uploads", (req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin) || (origin && origin.startsWith("http://localhost"))) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
   res.removeHeader && res.removeHeader("Cross-Origin-Resource-Policy");
   res.removeHeader && res.removeHeader("Cross-Origin-Opener-Policy");
   res.removeHeader && res.removeHeader("X-Frame-Options");
   res.removeHeader && res.removeHeader("Content-Security-Policy");
-  res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
   next();
 });
+
 app.use("/uploads", express.static(uploadDir, {
   setHeaders: function (res, path, stat) {
-    res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+    const origin = res.req.headers.origin;
+    if (allowedOrigins.includes(origin) || (origin && origin.startsWith("http://localhost"))) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
-    // Relax security headers for media
     res.removeHeader && res.removeHeader("Cross-Origin-Resource-Policy");
     res.removeHeader && res.removeHeader("Cross-Origin-Opener-Policy");
     res.removeHeader && res.removeHeader("X-Frame-Options");
     res.removeHeader && res.removeHeader("Content-Security-Policy");
   }
 }));
-
 
 // ==================
 // Multer Setup for Blog Uploads
@@ -105,16 +117,12 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ==================
-// Example Blog Routes
-// ==================
-
-// ==================
 // Cookie parser
 // ==================
 app.use(cookieParser());
 
 // ==================
-// Other routes (your existing routes)
+// Other routes
 // ==================
 const contactMessagesRouter = require("./routes/contactMessages");
 const adminRoutes = require("./routes/admin");
@@ -125,6 +133,7 @@ const musicRoutes = require("./routes/music");
 const donationsRoutes = require("./routes/donations");
 const eventsRouter = require("./routes/events");
 const blogRoutes = require("./routes/blogs");
+const chatbotRoutes = require("./routes/chatbot");
 
 // Mount routes
 app.use("/api/events", eventsRouter);
@@ -137,6 +146,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/youtube", youtubeRoutes);
 app.use("/api/contact-messages", contactMessagesRouter);
 app.use("/api", publicRoutes);
+app.use("/api/chatbot", chatbotRoutes);
 
 // ==================
 // Health check
@@ -157,8 +167,6 @@ app.use((err, req, res, next) => {
     error: process.env.NODE_ENV === "development" ? err.message : {},
   });
 });
-
-
 
 // ==================
 // Start Server
